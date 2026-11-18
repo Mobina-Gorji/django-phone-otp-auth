@@ -4,7 +4,7 @@ from django.db import models
 
 class OTP(models.Model):
 
-    phone_number = models.CharField(max_length=13)
+    phone_number = models.CharField(max_length=13, db_index=True)
 
     code_hash = models.CharField(max_length=128)
 
