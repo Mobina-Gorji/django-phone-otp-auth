@@ -2,7 +2,7 @@ from django.test import TestCase
 from .models import OTP
 from django.utils import timezone
 from datetime import timedelta
-from .services import hash_otp, create_otp_for_phone
+from .services import hash_otp, create_otp_for_phone, verify_otp
 from django.contrib.auth.hashers import check_password
 
 # Create your tests here.
@@ -137,10 +137,92 @@ class CreateOTPForPhoneTest(TestCase):
         phone_number = "+989123456789"
         _, otp = create_otp_for_phone(phone_number)
 
-        expected_expiration = otp.created_at + timedelta(minutes=2)
-
         self.assertAlmostEqual(
             (otp.expires_at - otp.created_at).total_seconds(),
             120,
             delta=2
         )
+
+class VerifyOTPTest(TestCase):
+
+    def setUp(self):
+
+        self.phone_number = "+989123456789"
+        self.otp_code = "123456"
+
+        self.otp = OTP.objects.create(
+            phone_number=self.phone_number,
+            code_hash=hash_otp(self.otp_code),
+            expires_at=timezone.now() + timedelta(minutes=2)
+        )
+
+    def test_verify_correct_otp(self):
+
+        result = verify_otp(self.phone_number, self.otp_code)
+
+        self.assertTrue(result)
+
+        self.otp.refresh_from_db()
+        self.assertTrue(self.otp.is_used)
+
+    def test_verify_incorrect_otp(self):
+        result = verify_otp(
+            self.phone_number,
+            "654321"
+        )
+
+        self.assertFalse(result)
+
+        self.otp.refresh_from_db()
+        self.assertEqual(self.otp.attempts, 1)
+
+    def test_verify_expired_otp(self):
+        self.otp.expires_at = timezone.now() - timedelta(minutes=1)
+        self.otp.save()
+
+        result = verify_otp(
+            self.phone_number,
+            self.otp_code
+        )
+
+        self.assertFalse(result)
+
+    def test_verify_used_otp(self):
+        self.otp.is_used = True
+        self.otp.save()
+
+        result = verify_otp(
+            self.phone_number,
+            self.otp_code
+        )
+
+        self.assertFalse(result)
+
+    def test_verify_otp_max_attempts(self):
+        self.otp.attempts = 4
+        self.otp.save()
+
+        result = verify_otp(
+            self.phone_number,
+            self.otp_code
+        )
+
+        self.assertFalse(result)
+
+    def test_only_latest_otp_is_valid(self):
+        old_otp = self.otp
+
+        new_otp_code = "654321"
+
+        OTP.objects.create(
+            phone_number=self.phone_number,
+            code_hash=hash_otp(new_otp_code),
+            expires_at=timezone.now() + timedelta(minutes=2)
+        )
+
+        result = verify_otp(
+            self.phone_number,
+            self.otp_code
+        )
+
+        self.assertFalse(result)

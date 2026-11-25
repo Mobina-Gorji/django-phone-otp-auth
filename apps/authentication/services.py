@@ -1,8 +1,9 @@
 import secrets
-from django.contrib.auth.hashers import make_password
+from django.contrib.auth.hashers import make_password, check_password
 from datetime import timedelta
 from django.utils import timezone
 from .models import OTP
+from django.db import transaction
 
 def generate_otp():
 
@@ -25,3 +26,33 @@ def create_otp_for_phone(phone_number):
     )
 
     return otp_code, otp
+
+def verify_otp(phone_number, otp_code):
+
+    with transaction.atomic():
+
+        otp = OTP.objects.select_for_update().filter(
+            phone_number=phone_number
+        ).order_by("-created_at", "-id").first()
+
+        if otp is None:
+            return False
+
+        if otp.is_used:
+            return False
+
+        if otp.expires_at <= timezone.now():
+            return False
+
+        if otp.attempts >= 4:
+            return False
+
+        if not check_password(otp_code, otp.code_hash):
+            otp.attempts += 1
+            otp.save(update_fields=["attempts"])
+            return False
+
+        otp.is_used = True
+        otp.save(update_fields=["is_used"])
+
+        return True
